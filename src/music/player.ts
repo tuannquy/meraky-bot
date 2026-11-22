@@ -1,14 +1,20 @@
 import type { Client, GuildTextBasedChannel, Message } from "discord.js";
-import { DisTube, Events, type Queue, type Song } from "distube";
+import { DisTube, Events, RepeatMode, type Queue, type Song } from "distube";
 import { config } from "../config.js";
-import { MerakyYouTubePlugin } from "./youtubePlugin.js";
+import { detectPrematureEnd, recordFfmpegLine, takeFfmpegTail } from "./streamHealth.js";
+import { MerakyYouTubePlugin, preferYtDlpFor } from "./youtubePlugin.js";
 import { isYtDlpAvailable } from "./ytdlp.js";
 import { controlRow, errorEmbed, infoEmbed, nowPlayingEmbed } from "../utils/embed.js";
 import { describeError } from "../utils/errors.js";
-import { songLink } from "../utils/formatters.js";
+import { formatTime, songLink } from "../utils/formatters.js";
 
 const idleTimers = new Map<string, NodeJS.Timeout>();
 const nowPlayingMessages = new Map<string, Message>();
+const retriedSongs = new Set<string>();
+const pendingRetries = new Set<string>();
+
+const RETRY_DELAY_MS = 1000;
+const MAX_RETRY_MEMORY = 200;
 
 export function createPlayer(client: Client): DisTube {
   const distube = new DisTube(client, {
@@ -109,8 +115,69 @@ async function announceNowPlaying(queue: Queue, song: Song) {
   if (message) nowPlayingMessages.set(queue.id, message);
 }
 
+function retryWithYtDlp(distube: DisTube, queue: Queue, song: Song): boolean {
+  const key = `${queue.id}:${song.id}`;
+  const voiceChannel = queue.voiceChannel;
+  if (!voiceChannel || !song.url || retriedSongs.has(key)) return false;
+
+  if (retriedSongs.size >= MAX_RETRY_MEMORY) retriedSongs.clear();
+  retriedSongs.add(key);
+  preferYtDlpFor.add(song.id);
+  if (song.stream.playFromSource) delete song.stream.url;
+
+  const guildId = queue.id;
+  const textChannel = queue.textChannel;
+  pendingRetries.add(guildId);
+  setTimeout(async () => {
+    pendingRetries.delete(guildId);
+    try {
+      await distube.play(voiceChannel, song, {
+        member: song.member,
+        textChannel,
+        position: distube.getQueue(guildId)?.songs.length ? 1 : 0,
+      });
+    } catch (err) {
+      console.error(`[player] Thử lại ${song.id} thất bại:`, err);
+      await textChannel?.send({ embeds: [errorEmbed(describeError(err))] }).catch(() => undefined);
+    }
+  }, RETRY_DELAY_MS);
+  return true;
+}
+
+async function handleSongFinished(distube: DisTube, queue: Queue, song: Song) {
+  const tail = takeFfmpegTail(queue.id);
+  const end = detectPrematureEnd(queue, song);
+  if (!end) return;
+
+  console.warn(
+    `[player] Bài ${song.id} (${formatTime(song.duration)}) dừng sau ${end.playedSeconds.toFixed(1)}s, ffmpeg thoát với mã ${end.ffmpegExitCode}. Log ffmpeg cuối:\n  ${tail.join("\n  ") || "(trống)"}`,
+  );
+
+  if (retryWithYtDlp(distube, queue, song)) {
+    await send(queue, {
+      embeds: [infoEmbed(`Luồng âm thanh bị ngắt sau ${Math.round(end.playedSeconds)} giây. Meraky đang thử lại bằng cách khác...`)],
+    });
+    return;
+  }
+
+  if (queue.repeatMode === RepeatMode.SONG) queue.setRepeatMode(RepeatMode.DISABLED);
+  await send(queue, {
+    embeds: [
+      errorEmbed(
+        `YouTube cắt luồng âm thanh của **${songLink(song, 60)}** sau ${Math.round(end.playedSeconds)} giây. ` +
+          "Thường do YouTube chặn máy chủ của bot. Chủ bot cần cấu hình `YOUTUBE_COOKIES` (xem README).",
+      ),
+    ],
+  });
+}
+
 function registerPlayerEvents(distube: DisTube) {
   distube
+    .on(Events.FFMPEG_DEBUG, recordFfmpegLine)
+    .on(
+      Events.FINISH_SONG,
+      guard(Events.FINISH_SONG, (queue, song) => handleSongFinished(distube, queue, song)),
+    )
     .on(
       Events.PLAY_SONG,
       guard(Events.PLAY_SONG, async (queue, song) => {
@@ -123,6 +190,7 @@ function registerPlayerEvents(distube: DisTube) {
       Events.FINISH,
       guard(Events.FINISH, async (queue) => {
         await clearNowPlayingControls(queue.id);
+        if (pendingRetries.has(queue.id)) return;
         await send(queue, {
           embeds: [infoEmbed("Hết hàng đợi rồi. Dùng `/meraky play` để thêm bài mới nhé.")],
         });
