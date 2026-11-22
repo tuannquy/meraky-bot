@@ -6,7 +6,17 @@ import {
   type ColorResolvable,
 } from "discord.js";
 import { RepeatMode, type Playlist, type Queue, type Song } from "distube";
-import { formatNumber, formatTime, progressBar, songLink, truncate } from "./formatters.js";
+import {
+  escapeMarkdown,
+  formatNumber,
+  formatTime,
+  orFallback,
+  progressBar,
+  songLink,
+  songTitle,
+  truncate,
+  uploaderName,
+} from "./formatters.js";
 
 export const BRAND = "Meraky";
 
@@ -51,12 +61,16 @@ function requester(song: Song) {
 export function nowPlayingEmbed(queue: Queue, song: Song, withProgress = false) {
   const embed = base(Colors.brand)
     .setAuthor({ name: queue.paused ? "Đang tạm dừng" : "Đang phát" })
-    .setTitle(truncate(song.name ?? "Không rõ tên", 256))
-    .setURL(song.url ?? null)
-    .setThumbnail(song.thumbnail ?? null)
+    .setTitle(truncate(songTitle(song), 256))
+    .setURL(song.url || null)
+    .setThumbnail(song.thumbnail || null)
     .addFields(
-      { name: "Kênh", value: truncate(song.uploader.name ?? "—", 100), inline: true },
-      { name: "Thời lượng", value: song.isLive ? "Trực tiếp" : song.formattedDuration, inline: true },
+      { name: "Kênh", value: truncate(uploaderName(song), 100), inline: true },
+      {
+        name: "Thời lượng",
+        value: song.isLive ? "Trực tiếp" : orFallback(song.formattedDuration, "—"),
+        inline: true,
+      },
       { name: "Yêu cầu bởi", value: requester(song), inline: true },
       { name: "Âm lượng", value: `${queue.volume}%`, inline: true },
       { name: "Lặp lại", value: REPEAT_LABEL[queue.repeatMode], inline: true },
@@ -87,7 +101,7 @@ export function addedSongEmbed(queue: Queue, song: Song) {
   return base(Colors.success)
     .setAuthor({ name: "Đã thêm vào hàng đợi" })
     .setDescription(`**${songLink(song, 80)}**`)
-    .setThumbnail(song.thumbnail ?? null)
+    .setThumbnail(song.thumbnail || null)
     .addFields(
       { name: "Thời lượng", value: song.isLive ? "Trực tiếp" : song.formattedDuration, inline: true },
       { name: "Vị trí", value: position > 0 ? `#${position}` : "Tiếp theo", inline: true },
@@ -96,10 +110,11 @@ export function addedSongEmbed(queue: Queue, song: Song) {
 }
 
 export function addedPlaylistEmbed(playlist: Playlist) {
+  const playlistName = escapeMarkdown(truncate(orFallback(playlist.name, "Playlist"), 80));
   return base(Colors.success)
     .setAuthor({ name: "Đã thêm playlist" })
-    .setDescription(`**${playlist.url ? `[${truncate(playlist.name ?? "Playlist", 80)}](${playlist.url})` : truncate(playlist.name ?? "Playlist", 80)}**`)
-    .setThumbnail(playlist.thumbnail ?? null)
+    .setDescription(`**${playlist.url ? `[${playlistName}](${playlist.url})` : playlistName}**`)
+    .setThumbnail(playlist.thumbnail || null)
     .addFields(
       { name: "Số bài", value: `${playlist.songs.length}`, inline: true },
       { name: "Tổng thời lượng", value: playlist.formattedDuration, inline: true },

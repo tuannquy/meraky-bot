@@ -22,8 +22,22 @@ export function escapeMarkdown(text: string): string {
   return text.replace(/([\\*_`~|[\]])/g, "\\$1");
 }
 
+/** YouTube sometimes returns blank metadata; `??` would keep "" and break embeds. */
+export function orFallback(value: string | undefined | null, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+export function songTitle(song: Song): string {
+  return orFallback(song.name, "Không rõ tên");
+}
+
+export function uploaderName(song: Song): string {
+  return orFallback(song.uploader?.name, "—");
+}
+
 export function songLink(song: Song, max = 60): string {
-  const name = escapeMarkdown(truncate(song.name ?? "Không rõ tên", max));
+  const name = escapeMarkdown(truncate(songTitle(song), max));
   return song.url ? `[${name}](${song.url})` : name;
 }
 

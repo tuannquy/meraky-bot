@@ -25,10 +25,20 @@ if (!token) {
   process.exit(1);
 }
 
+const allowedUserId = optional("ALLOWED_USER_ID");
+if (!allowedUserId || !/^\d{17,20}$/.test(allowedUserId)) {
+  console.error(
+    "[config] Thiếu hoặc sai ALLOWED_USER_ID. Đây phải là ID người dùng Discord (17-20 chữ số) của người duy nhất được dùng bot. " +
+      "Bật Developer Mode, nhấp chuột phải vào tên bạn rồi chọn Copy User ID.",
+  );
+  process.exit(1);
+}
+
 const idleSeconds = Number(optional("IDLE_TIMEOUT_SECONDS") ?? 120);
 
 export const config = {
   token,
+  allowedUserId,
   guildId: optional("DISCORD_GUILD_ID"),
   geniusApiKey: optional("GENIUS_API_KEY"),
   youtubeCookies: parseCookies(optional("YOUTUBE_COOKIES")),

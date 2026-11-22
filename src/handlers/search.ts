@@ -8,7 +8,7 @@ import {
 import { YouTubePlugin } from "@distube/youtube";
 import type { Subcommand } from "../types.js";
 import { BRAND, Colors, warningEmbed } from "../utils/embed.js";
-import { songLink, truncate } from "../utils/formatters.js";
+import { songLink, songTitle, truncate, uploaderName } from "../utils/formatters.js";
 import { UserError } from "../utils/errors.js";
 import { requireVoiceChannel } from "../utils/voice.js";
 import { enqueue } from "./play.js";
@@ -50,7 +50,7 @@ export const search: Subcommand = {
         results
           .map(
             (song, i) =>
-              `\`${i + 1}.\` ${songLink(song, 55)} · \`${song.isLive ? "LIVE" : song.formattedDuration}\`\n-# ${truncate(song.uploader.name ?? "—", 60)}`,
+              `\`${i + 1}.\` ${songLink(song, 55)} · \`${song.isLive ? "LIVE" : song.formattedDuration}\`\n-# ${truncate(uploaderName(song), 60)}`,
           )
           .join("\n"),
       )
@@ -61,8 +61,8 @@ export const search: Subcommand = {
       .setPlaceholder("Chọn bài muốn phát")
       .addOptions(
         results.map((song, i) => ({
-          label: truncate(`${i + 1}. ${song.name ?? "Không rõ tên"}`, 100),
-          description: truncate(`${song.uploader.name ?? "—"} · ${song.isLive ? "LIVE" : song.formattedDuration}`, 100),
+          label: truncate(`${i + 1}. ${songTitle(song)}`, 100),
+          description: truncate(`${uploaderName(song)} · ${song.isLive ? "LIVE" : song.formattedDuration}`, 100),
           value: String(i),
         })),
       );

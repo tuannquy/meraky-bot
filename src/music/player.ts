@@ -1,10 +1,11 @@
 import type { Client, GuildTextBasedChannel, Message } from "discord.js";
-import { DisTube, Events, type Queue } from "distube";
+import { DisTube, Events, type Queue, type Song } from "distube";
 import { config } from "../config.js";
 import { MerakyYouTubePlugin } from "./youtubePlugin.js";
 import { isYtDlpAvailable } from "./ytdlp.js";
 import { controlRow, errorEmbed, infoEmbed, nowPlayingEmbed } from "../utils/embed.js";
 import { describeError } from "../utils/errors.js";
+import { songLink } from "../utils/formatters.js";
 
 const idleTimers = new Map<string, NodeJS.Timeout>();
 const nowPlayingMessages = new Map<string, Message>();
@@ -80,41 +81,80 @@ async function send(queue: Queue, payload: Parameters<NonNullable<Queue["textCha
   }
 }
 
+/** A throwing listener would otherwise become an unhandled rejection and fail silently. */
+function guard<A extends unknown[]>(event: string, handler: (...args: A) => Promise<void>) {
+  return async (...args: A) => {
+    try {
+      await handler(...args);
+    } catch (err) {
+      console.error(`[player] Lỗi trong sự kiện ${event}:`, err);
+    }
+  };
+}
+
+async function announceNowPlaying(queue: Queue, song: Song) {
+  let message: Message | undefined;
+  try {
+    message = await send(queue, {
+      embeds: [nowPlayingEmbed(queue, song)],
+      components: [controlRow(queue)],
+    });
+  } catch (err) {
+    console.error("[player] Không dựng được thẻ Đang phát, dùng bản rút gọn:", err);
+    message = await send(queue, {
+      embeds: [infoEmbed(`Đang phát **${songLink(song, 80)}**`)],
+      components: [controlRow(queue)],
+    });
+  }
+  if (message) nowPlayingMessages.set(queue.id, message);
+}
+
 function registerPlayerEvents(distube: DisTube) {
   distube
-    .on(Events.PLAY_SONG, async (queue, song) => {
-      cancelIdleLeave(queue.id);
-      await clearNowPlayingControls(queue.id);
-      const message = await send(queue, {
-        embeds: [nowPlayingEmbed(queue, song)],
-        components: [controlRow(queue)],
-      });
-      if (message) nowPlayingMessages.set(queue.id, message);
-    })
-    .on(Events.FINISH, async (queue) => {
-      await clearNowPlayingControls(queue.id);
-      await send(queue, {
-        embeds: [infoEmbed("Hết hàng đợi rồi. Dùng `/meraky play` để thêm bài mới nhé.")],
-      });
-      scheduleIdleLeave(distube, queue.id, "không còn bài nào để phát", queue.textChannel);
-    })
-    .on(Events.DELETE_QUEUE, async (queue) => {
-      await clearNowPlayingControls(queue.id);
-      if (distube.voices.get(queue.id) && !idleTimers.has(queue.id)) {
+    .on(
+      Events.PLAY_SONG,
+      guard(Events.PLAY_SONG, async (queue, song) => {
+        cancelIdleLeave(queue.id);
+        await clearNowPlayingControls(queue.id);
+        await announceNowPlaying(queue, song);
+      }),
+    )
+    .on(
+      Events.FINISH,
+      guard(Events.FINISH, async (queue) => {
+        await clearNowPlayingControls(queue.id);
+        await send(queue, {
+          embeds: [infoEmbed("Hết hàng đợi rồi. Dùng `/meraky play` để thêm bài mới nhé.")],
+        });
         scheduleIdleLeave(distube, queue.id, "không còn bài nào để phát", queue.textChannel);
-      }
-    })
-    .on(Events.DISCONNECT, async (queue) => {
-      cancelIdleLeave(queue.id);
-      await clearNowPlayingControls(queue.id);
-      await send(queue, {
-        embeds: [infoEmbed("Meraky đã bị ngắt khỏi kênh thoại nên hàng đợi đã được xóa.")],
-      });
-    })
-    .on(Events.ERROR, async (error, queue, song) => {
-      console.error(`[player] Lỗi khi phát ${song?.url ?? "bài hát"}:`, error);
-      await send(queue, { embeds: [errorEmbed(describeError(error))] });
-    });
+      }),
+    )
+    .on(
+      Events.DELETE_QUEUE,
+      guard(Events.DELETE_QUEUE, async (queue) => {
+        await clearNowPlayingControls(queue.id);
+        if (distube.voices.get(queue.id) && !idleTimers.has(queue.id)) {
+          scheduleIdleLeave(distube, queue.id, "không còn bài nào để phát", queue.textChannel);
+        }
+      }),
+    )
+    .on(
+      Events.DISCONNECT,
+      guard(Events.DISCONNECT, async (queue) => {
+        cancelIdleLeave(queue.id);
+        await clearNowPlayingControls(queue.id);
+        await send(queue, {
+          embeds: [infoEmbed("Meraky đã bị ngắt khỏi kênh thoại nên hàng đợi đã được xóa.")],
+        });
+      }),
+    )
+    .on(
+      Events.ERROR,
+      guard(Events.ERROR, async (error, queue, song) => {
+        console.error(`[player] Lỗi khi phát ${song?.url ?? "bài hát"}:`, error);
+        await send(queue, { embeds: [errorEmbed(describeError(error))] });
+      }),
+    );
 
   if (process.env.DEBUG_DISTUBE) {
     distube.on(Events.DEBUG, (msg) => console.debug(`[distube] ${msg}`));

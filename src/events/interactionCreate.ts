@@ -7,9 +7,12 @@ import {
 } from "discord.js";
 import { RepeatMode, type DisTube } from "distube";
 import { subcommandMap } from "../commands/meraky.js";
+import { config } from "../config.js";
 import { refreshNowPlayingControls } from "../music/player.js";
+import { purgeStaleSession } from "../music/session.js";
 import { CONTROL_PREFIX, REPEAT_LABEL, errorEmbed, successEmbed, type ControlAction } from "../utils/embed.js";
 import { UserError, describeError } from "../utils/errors.js";
+import { orFallback } from "../utils/formatters.js";
 import { requireQueue } from "../utils/voice.js";
 
 async function replyError(interaction: RepliableInteraction, error: unknown) {
@@ -49,7 +52,7 @@ async function handleControlButton(interaction: ButtonInteraction<"cached">, dis
         message = "Đã bỏ qua bài cuối và dừng phát.";
       } else {
         const next = await queue.skip();
-        message = `Đã bỏ qua. Tiếp theo: **${next.name ?? "bài kế tiếp"}**`;
+        message = `Đã bỏ qua. Tiếp theo: **${orFallback(next.name, "bài kế tiếp")}**`;
       }
       break;
     }
@@ -82,6 +85,14 @@ async function handleControlButton(interaction: ButtonInteraction<"cached">, dis
 
 export function registerInteractionEvents(client: Client, distube: DisTube) {
   client.on(Events.InteractionCreate, async (interaction) => {
+    const isMerakyInput =
+      (interaction.isChatInputCommand() && interaction.commandName === "meraky") ||
+      (interaction.isButton() && interaction.customId.startsWith(`${CONTROL_PREFIX}:`));
+    if (isMerakyInput && interaction.user.id !== config.allowedUserId) {
+      await replyError(interaction as RepliableInteraction, new UserError("Bot này là bot riêng, chỉ chủ bot mới dùng được."));
+      return;
+    }
+
     if (!interaction.inCachedGuild()) {
       if (interaction.isRepliable()) {
         await replyError(interaction, new UserError("Meraky chỉ hoạt động trong server."));
@@ -93,6 +104,7 @@ export function registerInteractionEvents(client: Client, distube: DisTube) {
       const sub = subcommandMap.get(interaction.options.getSubcommand());
       if (!sub) return;
       try {
+        await purgeStaleSession(distube, interaction.guild);
         await sub.execute(interaction, distube);
       } catch (error) {
         await replyError(interaction, error);
@@ -102,6 +114,7 @@ export function registerInteractionEvents(client: Client, distube: DisTube) {
 
     if (interaction.isButton() && interaction.customId.startsWith(`${CONTROL_PREFIX}:`)) {
       try {
+        await purgeStaleSession(distube, interaction.guild);
         await handleControlButton(interaction, distube);
       } catch (error) {
         await replyError(interaction, error);

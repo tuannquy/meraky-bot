@@ -79,6 +79,7 @@ Khi test, nên đặt `DISCORD_GUILD_ID` là ID server của bạn. Lệnh `/mer
 | Biến | Bắt buộc | Mô tả |
 |------|----------|-------|
 | `DISCORD_TOKEN` | Có | Token của bot |
+| `ALLOWED_USER_ID` | Có | ID người dùng Discord duy nhất được dùng bot (xem phần "Giới hạn người dùng") |
 | `DISCORD_GUILD_ID` | Không | Đăng ký lệnh riêng cho một server (hiện ngay) |
 | `GENIUS_API_KEY` | Không | Token Genius, giúp nguồn lời dự phòng ổn định hơn |
 | `YOUTUBE_COOKIES` | Không* | Cookie YouTube dạng JSON array (xem bên dưới) |
@@ -86,6 +87,14 @@ Khi test, nên đặt `DISCORD_GUILD_ID` là ID server của bạn. Lệnh `/mer
 | `IDLE_TIMEOUT_SECONDS` | Không | Số giây chờ trước khi tự rời kênh (mặc định 120) |
 
 \* Gần như bắt buộc khi chạy trên cloud như Railway, xem phần tiếp theo.
+
+### Giới hạn người dùng
+
+Meraky là bot riêng: chỉ người có ID trong `ALLOWED_USER_ID` dùng được lệnh `/meraky` và các nút điều khiển. Người khác sẽ nhận thông báo "Bot này là bot riêng" chỉ họ nhìn thấy. Thiếu hoặc sai biến này thì bot không khởi động.
+
+Lấy ID của bạn: Discord > **Cài đặt > Nâng cao** > bật **Chế độ nhà phát triển**, rồi nhấp chuột phải vào tên bạn và chọn **Sao chép ID người dùng**.
+
+Nên tắt thêm **Public Bot** trong Developer Portal (tab **Bot**) để người lạ không mời được bot vào server của họ.
 
 ### Cookie YouTube (quan trọng khi chạy trên server)
 
@@ -101,10 +110,27 @@ Meraky dùng cookie này cho cả ytdl-core và yt-dlp. Nếu ytdl-core không l
 
 Repo có sẵn `Dockerfile` (cài FFmpeg và yt-dlp) và `railway.toml`, nên Railway tự build bằng Docker.
 
-1. Đưa code lên GitHub.
-2. Trên [Railway](https://railway.com), chọn **New Project > Deploy from GitHub repo** và chọn repo này.
-3. Vào tab **Variables** của service và thêm `DISCORD_TOKEN`. Nên thêm cả `YOUTUBE_COOKIES`, và `GENIUS_API_KEY` nếu có.
-4. Railway build và chạy bot. Xem tab **Deployments > Logs**, nếu thấy dòng `Đã đăng nhập: Meraky#xxxx` là xong.
+**Cách 1: Railway CLI (không cần GitHub)**
+
+```bash
+npm i -g @railway/cli
+railway login
+cd jukebot          # PHẢI đứng trong thư mục có Dockerfile
+railway init        # lần đầu: tạo project mới
+railway up
+```
+
+`railway up` upload thư mục hiện tại. Nếu chạy ở thư mục cha, Railway chỉ thấy một folder con, không tìm được `Dockerfile` và báo lỗi *"Railpack could not determine how to build the app"*.
+
+**Cách 2: Deploy từ GitHub**
+
+1. Đưa code lên GitHub, sao cho `Dockerfile` nằm ở thư mục gốc của repo.
+2. Trên [Railway](https://railway.com), chọn **New Project > Deploy from GitHub repo** và chọn repo đó.
+
+**Sau khi deploy (cả hai cách):**
+
+1. Vào tab **Variables** của service và thêm `DISCORD_TOKEN` và `ALLOWED_USER_ID`. Nên thêm cả `YOUTUBE_COOKIES`, và `GENIUS_API_KEY` nếu có. Railway tự deploy lại khi biến thay đổi.
+2. Xem tab **Deployments > Logs**. Build đúng sẽ hiện `Using Dockerfile`, không phải Railpack. Khi thấy dòng `Đã đăng nhập: Meraky#xxxx` là bot đã chạy.
 
 Ghi chú:
 
@@ -149,4 +175,5 @@ src/
 | "YouTube đang chặn máy chủ" | Cấu hình `YOUTUBE_COOKIES` |
 | Bot vào kênh nhưng không có tiếng | Kiểm tra FFmpeg đã cài (`ffmpeg -version`), bot có quyền **Speak** |
 | "Meraky cần quyền Connect và Speak" | Cấp quyền cho role của bot ở kênh thoại đó |
+| Kênh thoại tạm (VoiceMaster, ...) bị xóa khi bạn thoát | Meraky tự dọn hàng đợi và rời đi ngay khi kênh bị xóa. Nếu có gì còn sót, mọi lệnh `/meraky` cũng tự dọn phiên hỏng trước khi chạy |
 | Muốn xem log chi tiết của DisTube | Đặt biến `DEBUG_DISTUBE=1` |
