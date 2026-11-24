@@ -1,34 +1,25 @@
 import { YouTubePlugin, type Cookie, type YouTubeSong } from "@distube/youtube";
-import { DisTubeError, type ResolveOptions, type Song } from "distube";
+import type { ResolveOptions, Song } from "distube";
 import { isCookieRejectedError, markCookiesRejected } from "./cookieState.js";
-import { probeStreamUrl } from "./streamHealth.js";
-import { getStreamUrlWithYtDlp, isYtDlpAvailable } from "./ytdlp.js";
+import { isYtDlpAvailable } from "./ytdlp.js";
+import { isYouTubeUrl, localStreamUrl } from "./ytdlpProxy.js";
 
-/** Song ids whose next stream lookup should try yt-dlp first (set after a stream was cut short). */
-export const preferYtDlpFor = new Set<string>();
+/** Song ids whose next stream lookup should try a different yt-dlp client. */
+export const ytDlpClientFor = new Map<string, string>();
 
-/** After the first dead ytdl-core stream, skip it for everyone until restart. */
-let preferYtDlpDefault = false;
-
-export function enableYtDlpPreference() {
-  if (!preferYtDlpDefault) {
-    preferYtDlpDefault = true;
-    console.warn("[youtube] Chuyển sang lấy luồng bằng yt-dlp cho các bài tiếp theo.");
-  }
+export function setRetryClient(songId: string, client: string) {
+  ytDlpClientFor.set(songId, client);
 }
 
 function reasonOf(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, 160);
 }
 
-function logStream(songId: string, source: string, extra?: string) {
-  console.log(`[youtube] ${songId}: dùng luồng từ ${source}${extra ? ` (${extra})` : ""}.`);
-}
-
 /**
  * YouTube plugin with two safety nets for servers whose IP YouTube distrusts:
  * a stale or signed-out cookie is dropped instead of breaking every lookup, and
- * stream lookup falls back to yt-dlp when ytdl-core is blocked or broken.
+ * actual audio is pulled through yt-dlp (ffmpeg cannot speak SABR / throttled
+ * googlevideo URLs that ytdl-core returns).
  */
 export class MerakyYouTubePlugin extends YouTubePlugin {
   /** Retries once without cookies when YouTube rejects them; ytdl-core then fails every call. */
@@ -61,57 +52,14 @@ export class MerakyYouTubePlugin extends YouTubePlugin {
   }
 
   override async getStreamURL<T = unknown>(song: YouTubeSong<T>): Promise<string> {
-    const canUseYtDlp = Boolean(song.url) && (await isYtDlpAvailable());
-    const preferYtDlp = canUseYtDlp && (preferYtDlpFor.has(song.id) || preferYtDlpDefault);
-
-    if (preferYtDlp) {
-      try {
-        const url = await getStreamUrlWithYtDlp(song.url!);
-        logStream(song.id, "yt-dlp", preferYtDlpFor.has(song.id) ? "thử lại" : "ưu tiên");
-        return url;
-      } catch (err) {
-        console.warn(`[yt-dlp] Ưu tiên thất bại (${reasonOf(err)}), quay về ytdl-core.`);
-      }
+    const youtubeUrl = song.url;
+    if (youtubeUrl && isYouTubeUrl(youtubeUrl) && (await isYtDlpAvailable())) {
+      const client = ytDlpClientFor.get(song.id);
+      const url = localStreamUrl(youtubeUrl, client);
+      console.log(`[youtube] ${song.id}: dùng luồng yt-dlp pipe${client ? ` (client ${client})` : ""}.`);
+      return url;
     }
-
-    try {
-      const url = await this.withCookieFallback(() => super.getStreamURL(song));
-      const probe = await probeStreamUrl(url);
-      if (probe.ok) {
-        logStream(song.id, "ytdl-core", `HTTP ${probe.status}`);
-        return url;
-      }
-
-      console.warn(
-        `[youtube] ${song.id}: ytdl-core trả URL nhưng máy chủ media trả HTTP ${probe.status ?? "lỗi mạng"}.`,
-      );
-      if (!canUseYtDlp) {
-        logStream(song.id, "ytdl-core", "không kiểm tra được, không có yt-dlp");
-        return url;
-      }
-
-      try {
-        const fallback = await getStreamUrlWithYtDlp(song.url!);
-        enableYtDlpPreference();
-        logStream(song.id, "yt-dlp", "ytdl-core không mở được");
-        return fallback;
-      } catch (fallbackError) {
-        console.warn(`[yt-dlp] Cũng thất bại: ${reasonOf(fallbackError)}`);
-        throw new DisTubeError("NO_STREAM_URL", song.id);
-      }
-    } catch (primaryError) {
-      if (!canUseYtDlp) throw primaryError;
-      if (preferYtDlp) throw primaryError;
-      console.warn(`[youtube] ytdl-core lỗi (${reasonOf(primaryError)}), chuyển sang yt-dlp.`);
-      try {
-        const url = await getStreamUrlWithYtDlp(song.url!);
-        logStream(song.id, "yt-dlp", "dự phòng");
-        return url;
-      } catch (fallbackError) {
-        console.warn(`[yt-dlp] Cũng thất bại: ${reasonOf(fallbackError)}`);
-        throw primaryError;
-      }
-    }
+    return this.withCookieFallback(() => super.getStreamURL(song));
   }
 }
 

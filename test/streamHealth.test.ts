@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { Song } from "distube";
 import {
   detectPrematureEnd,
+  getFfmpegTail,
   playbackThreshold,
   probeStreamUrl,
   recordFfmpegLine,
@@ -48,6 +49,22 @@ test("ffmpeg debug được gắn theo guild và che URL", () => {
 
 test("redactUrls giữ host", () => {
   assert.equal(redactUrls("x https://a.b/c?d=1 y"), "x https://a.b/… y");
+});
+
+test("spawn mới xóa log cũ, và dòng lỗi không bị metadata đẩy mất", () => {
+  recordFfmpegLine("[9] [process] spawn: ffmpeg -i https://old.example/a");
+  recordFfmpegLine("[9] leftover");
+  recordFfmpegLine("[9] [process] spawn: ffmpeg -headers x\n -i https://rr3---sn-x.googlevideo.com/videoplayback?expire=1");
+  for (let i = 0; i < 50; i++) recordFfmpegLine(`[9] [ffmpeg] log:     Metadata: ${i}`);
+  recordFfmpegLine("[9] [ffmpeg] log: HTTP error 403 Forbidden");
+  recordFfmpegLine("[9] [process] exit: code=1 signal=unknown");
+  const tail = takeFfmpegTail("9");
+  assert.ok(tail.some((l) => /HTTP error 403/.test(l)), tail.join(" | "));
+  assert.ok(tail.some((l) => /exit: code=1/.test(l)));
+  assert.ok(tail[0].includes("[process] spawn:"));
+  assert.doesNotMatch(tail[0], /expire=/);
+  assert.ok(tail.length <= 40);
+  assert.equal(getFfmpegTail("9").length, 0);
 });
 
 test("probeStreamUrl coi 2xx/3xx là mở được, 403 là chết", async () => {

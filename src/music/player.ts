@@ -1,9 +1,10 @@
 import type { Client, GuildTextBasedChannel, Message } from "discord.js";
-import { DisTube, Events, RepeatMode, type Queue, type Song } from "distube";
+import { DisTube, DisTubeError, Events, RepeatMode, type Queue, type Song } from "distube";
 import { config } from "../config.js";
-import { detectPrematureEnd, recordFfmpegLine, takeFfmpegTail } from "./streamHealth.js";
-import { createYouTubePlugin, enableYtDlpPreference, preferYtDlpFor } from "./youtubePlugin.js";
+import { detectPrematureEnd, getFfmpegTail, recordFfmpegLine, takeFfmpegTail } from "./streamHealth.js";
+import { createYouTubePlugin, setRetryClient } from "./youtubePlugin.js";
 import { isYtDlpAvailable } from "./ytdlp.js";
+import { startYtDlpProxy } from "./ytdlpProxy.js";
 import { controlRow, errorEmbed, infoEmbed, nowPlayingEmbed } from "../utils/embed.js";
 import { describeError } from "../utils/errors.js";
 import { formatTime, songLink } from "../utils/formatters.js";
@@ -27,8 +28,9 @@ export function createPlayer(client: Client): DisTube {
     ffmpeg: {
       args: {
         input: {
-          headers:
-            "Referer: https://www.youtube.com/\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36\r\n",
+          // yt-dlp pipe is local HTTP; give ffmpeg time to see the webm/m4a header.
+          analyzeduration: "5M",
+          probesize: "5M",
         },
       },
     },
@@ -36,6 +38,7 @@ export function createPlayer(client: Client): DisTube {
 
   registerPlayerEvents(distube);
   void isYtDlpAvailable();
+  void startYtDlpProxy().catch((err) => console.error("[yt-dlp-proxy] Không khởi động được:", err));
   return distube;
 }
 
@@ -123,15 +126,14 @@ async function announceNowPlaying(queue: Queue, song: Song) {
   if (message) nowPlayingMessages.set(queue.id, message);
 }
 
-function retryWithYtDlp(distube: DisTube, queue: Queue, song: Song): boolean {
+function retryPlayback(distube: DisTube, queue: Queue, song: Song, client = "android"): boolean {
   const key = `${queue.id}:${song.id}`;
   const voiceChannel = queue.voiceChannel;
   if (!voiceChannel || !song.url || retriedSongs.has(key)) return false;
 
   if (retriedSongs.size >= MAX_RETRY_MEMORY) retriedSongs.clear();
   retriedSongs.add(key);
-  preferYtDlpFor.add(song.id);
-  enableYtDlpPreference();
+  setRetryClient(song.id, client);
   if (song.stream.playFromSource) delete song.stream.url;
 
   const guildId = queue.id;
@@ -154,8 +156,13 @@ function retryWithYtDlp(distube: DisTube, queue: Queue, song: Song): boolean {
   return true;
 }
 
+function logFfmpegTail(guildId: string, consume: boolean) {
+  const tail = consume ? takeFfmpegTail(guildId) : getFfmpegTail(guildId);
+  if (tail.length) console.warn(`[player] Log ffmpeg:\n  ${tail.join("\n  ")}`);
+  return tail;
+}
+
 async function handleSongFinished(distube: DisTube, queue: Queue, song: Song) {
-  const tail = takeFfmpegTail(queue.id);
   const process = queue.voice?.stream?.process;
   const playedSeconds = Number(queue.currentTime) || 0;
   console.log(
@@ -163,13 +170,17 @@ async function handleSongFinished(distube: DisTube, queue: Queue, song: Song) {
   );
 
   const end = detectPrematureEnd(song, playedSeconds);
-  if (!end) return;
+  if (!end) {
+    takeFfmpegTail(queue.id);
+    return;
+  }
 
+  logFfmpegTail(queue.id, true);
   console.warn(
-    `[player] Bài ${song.id} (${formatTime(song.duration)}) dừng sau ${end.playedSeconds.toFixed(1)}s (ngưỡng ${end.threshold.toFixed(1)}s). Log ffmpeg cuối:\n  ${tail.join("\n  ") || "(trống)"}`,
+    `[player] Bài ${song.id} (${formatTime(song.duration)}) dừng sau ${end.playedSeconds.toFixed(1)}s (ngưỡng ${end.threshold.toFixed(1)}s).`,
   );
 
-  if (retryWithYtDlp(distube, queue, song)) {
+  if (retryPlayback(distube, queue, song)) {
     await send(queue, {
       embeds: [infoEmbed(`Luồng âm thanh bị ngắt sau ${Math.round(end.playedSeconds)} giây. Meraky đang thử lại bằng cách khác...`)],
     });
@@ -240,6 +251,14 @@ function registerPlayerEvents(distube: DisTube) {
       Events.ERROR,
       guard(Events.ERROR, async (error, queue, song) => {
         console.error(`[player] Lỗi khi phát ${song?.url ?? "bài hát"}:`, error);
+        logFfmpegTail(queue.id, true);
+        const retryable = error instanceof DisTubeError && error.errorCode === "FFMPEG_EXITED";
+        if (retryable && song && retryPlayback(distube, queue, song)) {
+          await send(queue, {
+            embeds: [infoEmbed("Luồng ffmpeg bị lỗi. Meraky đang thử lại bằng client YouTube khác...")],
+          });
+          return;
+        }
         await send(queue, { embeds: [errorEmbed(describeError(error))] });
       }),
     );

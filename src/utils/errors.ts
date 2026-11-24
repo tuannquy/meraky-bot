@@ -28,7 +28,7 @@ const MESSAGES: Record<string, string> = {
   EMPTY_PLAYLIST: "Playlist không có video hợp lệ nào.",
   EMPTY_FILTERED_PLAYLIST: "Playlist không có video phát được (video giới hạn độ tuổi đã bị lọc).",
   FFMPEG_NOT_INSTALLED: "Máy chủ chưa cài FFmpeg.",
-  FFMPEG_EXITED: "Luồng âm thanh bị ngắt giữa chừng. Thử phát lại bài này nhé.",
+  FFMPEG_EXITED: "FFmpeg không phát được luồng YouTube (thường do YouTube chặn SABR/403). Thử lại bài, hoặc xuất cookie mới.",
   CANNOT_GET_STREAM_URL: "Không lấy được luồng âm thanh của bài này.",
   NO_STREAM_URL: "YouTube không cho máy chủ của Meraky mở luồng âm thanh. Thử lại, hoặc chủ bot cần cookie mới (xem README).",
 };

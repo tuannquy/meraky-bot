@@ -1,6 +1,6 @@
 import type { Song } from "distube";
 
-const MAX_TAIL_LINES = 20;
+const MAX_TAIL_LINES = 40;
 const MIN_DURATION_SECONDS = 20;
 const MAX_EXPECTED_PLAYED_SECONDS = 20;
 const PROBE_TIMEOUT_MS = 5_000;
@@ -9,27 +9,52 @@ const PROBE_USER_AGENT =
 
 const ffmpegTails = new Map<string, string[]>();
 
+const IMPORTANT =
+  /error|fatal|403|401|404|invalid data|connection reset|http error|end of file|failed|exit:|signal=/i;
+const LOW_VALUE = /Metadata:|encoder\s+:|Stream mapping:|Press \[q\]|Output #|Input #|Duration:|Stream #0|bitrate:|start:/i;
+
 /** Stream URLs are signed and tied to the server's IP, so keep only the host in logs. */
 export function redactUrls(text: string): string {
   return text.replace(/(https?:\/\/[^/\s?]+)[^\s]*/g, "$1/…");
 }
 
+function isLowValue(line: string) {
+  return LOW_VALUE.test(line) && !IMPORTANT.test(line);
+}
+
 /**
  * DisTube ignores ffmpeg exit codes 0 and 255, so a stream that is cut short ends
  * silently as a normal finish. Keeping ffmpeg's last output is the only way to learn why.
+ * Header/metadata lines are dropped first so a trailing HTTP 403 is not pushed out.
  */
 export function recordFfmpegLine(debugLine: string) {
   const match = /^\[(\d+)\] (.*)$/s.exec(debugLine);
   if (!match) return;
-  const [, guildId, line] = match;
+  const [, guildId, raw] = match;
+  const line = redactUrls(raw.trim());
+  if (!line) return;
+
+  if (line.includes("[process] spawn:")) {
+    ffmpegTails.set(guildId, [line.replace(/\s+/g, " ").slice(0, 240)]);
+    return;
+  }
+
   const lines = ffmpegTails.get(guildId) ?? [];
-  lines.push(redactUrls(line.trim()));
-  if (lines.length > MAX_TAIL_LINES) lines.shift();
+  lines.push(line);
+  while (lines.length > MAX_TAIL_LINES) {
+    const dropAt = lines.findIndex((l) => isLowValue(l));
+    if (dropAt >= 0) lines.splice(dropAt, 1);
+    else lines.shift();
+  }
   ffmpegTails.set(guildId, lines);
 }
 
+export function getFfmpegTail(guildId: string): string[] {
+  return [...(ffmpegTails.get(guildId) ?? [])];
+}
+
 export function takeFfmpegTail(guildId: string): string[] {
-  const lines = ffmpegTails.get(guildId) ?? [];
+  const lines = getFfmpegTail(guildId);
   ffmpegTails.delete(guildId);
   return lines;
 }

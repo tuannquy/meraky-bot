@@ -107,7 +107,7 @@ YouTube thường chặn việc lấy luồng âm thanh từ IP của các nhà 
 
 Bộ cookie cần có đủ `SID`, `SAPISID`, `__Secure-1PSID`, `__Secure-3PSID`, `__Secure-1PAPISID`, `__Secure-3PAPISID`. Nếu thiếu `SAPISID`, bot bỏ qua cookie và chạy không cookie.
 
-Meraky dùng cookie này cho cả ytdl-core và yt-dlp. Nếu ytdl-core không lấy được luồng, bot tự động thử lại bằng yt-dlp.
+Meraky dùng cookie này cho yt-dlp khi tải luồng (ffmpeg không nói trực tiếp với googlevideo, vì YouTube SABR/throttle cắt luồng sau vài trăm mili-giây). ytdl-core vẫn dùng cookie khi tìm/resolve bài.
 
 **Khi cookie hết hạn:** nếu YouTube báo cookie đã đăng xuất (`AUTH_FAILED`, *"YouTube treats the cookie as signed out"*), bot ghi log cảnh báo, tự tắt cookie đó và thử lại không cookie, nên bài vẫn có thể phát nếu IP không bị chặn. Nếu IP vẫn bị chặn thì bot báo cần cookie mới. Cookie lấy từ trình duyệt đang dùng thường bị xoay sau vài giờ hoặc vài ngày, vì vậy hãy xuất theo cách ẩn danh ở trên.
 
@@ -166,10 +166,11 @@ src/
 │   └── voiceStateUpdate.ts  # Tự rời kênh khi không còn ai
 ├── music/
 │   ├── player.ts            # Cấu hình DisTube, tin nhắn "Đang phát", tự rời kênh
-│   ├── youtubePlugin.ts     # Plugin YouTube có dự phòng bằng yt-dlp
-│   ├── streamHealth.ts      # Phát hiện luồng chết sớm, kiểm tra URL trước khi phát
+│   ├── youtubePlugin.ts     # Plugin YouTube, lấy luồng qua yt-dlp
+│   ├── streamHealth.ts      # Phát hiện luồng chết sớm
 │   ├── cookieState.ts       # Cookie YouTube bị từ chối thì tắt toàn cục
-│   ├── ytdlp.ts             # Gọi yt-dlp, chuyển cookie sang định dạng Netscape
+│   ├── ytdlp.ts             # Gọi yt-dlp, cập nhật extractor lúc khởi động
+│   ├── ytdlpProxy.ts        # HTTP local: ffmpeg đọc stdout của yt-dlp
 │   └── lyricsService.ts     # Tìm lời bài hát (LRCLIB rồi đến Genius)
 └── utils/                   # Embed, định dạng thời gian, lỗi, kiểm tra kênh thoại
 ```
@@ -181,7 +182,7 @@ src/
 | Không thấy lệnh `/meraky` | Đặt `DISCORD_GUILD_ID` để lệnh hiện ngay, hoặc đợi vài phút với lệnh toàn cục. Kiểm tra bot được mời với scope `applications.commands` |
 | "YouTube đang chặn máy chủ" | Cấu hình `YOUTUBE_COOKIES` |
 | "Cookie YouTube của bot không còn hợp lệ" / log `AUTH_FAILED` | Xuất cookie mới theo cách ẩn danh (mục Cookie YouTube), cập nhật `YOUTUBE_COOKIES`, redeploy |
-| Thẻ "Đang phát" hiện rồi ngay sau đó "Hết hàng đợi" | YouTube trả URL nhưng không phát được (thường 403). Bot tự kiểm tra URL, chuyển sang yt-dlp và thử lại. Redeploy bản mới. Log sẽ có `Kết thúc … phát 0.0s` rồi `dùng luồng từ yt-dlp` |
+| Thẻ "Đang phát" hiện rồi ngay sau đó "Hết hàng đợi" / `FFMPEG_EXITED` | YouTube cắt luồng (SABR). Bản mới cho yt-dlp tự tải audio rồi ffmpeg chỉ transcode. Redeploy. Log nên có `dùng luồng yt-dlp pipe` |
 | Bot vào kênh nhưng không có tiếng | Kiểm tra FFmpeg đã cài (`ffmpeg -version`), bot có quyền **Speak** |
 | "Meraky cần quyền Connect và Speak" | Cấp quyền cho role của bot ở kênh thoại đó |
 | Kênh thoại tạm (VoiceMaster, ...) bị xóa khi bạn thoát | Meraky tự dọn hàng đợi và rời đi ngay khi kênh bị xóa. Nếu có gì còn sót, mọi lệnh `/meraky` cũng tự dọn phiên hỏng trước khi chạy |
