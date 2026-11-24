@@ -1,8 +1,11 @@
-import type { Queue, Song } from "distube";
+import type { Song } from "distube";
 
 const MAX_TAIL_LINES = 20;
-const MIN_DURATION_SECONDS = 60;
+const MIN_DURATION_SECONDS = 20;
 const MAX_EXPECTED_PLAYED_SECONDS = 20;
+const PROBE_TIMEOUT_MS = 5_000;
+const PROBE_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 const ffmpegTails = new Map<string, string[]>();
 
@@ -31,23 +34,62 @@ export function takeFfmpegTail(guildId: string): string[] {
   return lines;
 }
 
+export function playbackThreshold(durationSeconds: number) {
+  return Math.min(MAX_EXPECTED_PLAYED_SECONDS, durationSeconds * 0.2);
+}
+
 export interface StreamEnd {
   playedSeconds: number;
-  ffmpegExitCode: number | null;
+  threshold: number;
 }
 
 /**
- * Detects a song whose audio stopped on its own long before its real end. A user
- * stopping playback never matches: ffmpeg is still running at that moment.
+ * Detects a song whose audio stopped on its own long before its real end.
+ *
+ * User skip/jump never reaches this check: DisTube handles those via `_manualUpdate`
+ * and does not emit `FINISH_SONG`. Do not require ffmpeg's exit code — when the
+ * stream is empty YouTube 403, ffmpeg is often still running or has been SIGKILL'd
+ * (`exitCode === null`) while AudioPlayer already went Idle.
  */
-export function detectPrematureEnd(queue: Queue, song: Song): StreamEnd | null {
-  if (song.isLive || song.duration < MIN_DURATION_SECONDS) return null;
+export function detectPrematureEnd(song: Song, playedSeconds: number): StreamEnd | null {
+  if (song.isLive) return null;
+  const duration = song.duration || 0;
+  if (duration < MIN_DURATION_SECONDS) return null;
 
-  const ffmpeg = queue.voice.stream?.process;
-  const ffmpegExitCode = ffmpeg?.exitCode ?? null;
-  if (ffmpegExitCode === null) return null;
+  const played = Number.isFinite(playedSeconds) ? Math.max(playedSeconds, 0) : 0;
+  const threshold = playbackThreshold(duration);
+  return played < threshold ? { playedSeconds: played, threshold } : null;
+}
 
-  const playedSeconds = queue.currentTime;
-  const threshold = Math.min(MAX_EXPECTED_PLAYED_SECONDS, song.duration * 0.2);
-  return playedSeconds < threshold ? { playedSeconds, ffmpegExitCode } : null;
+export interface StreamProbe {
+  ok: boolean;
+  status: number | null;
+}
+
+/**
+ * Checks whether a signed media URL actually answers. ytdl-core can return a URL
+ * that immediately 403s on datacenter IPs; ffmpeg then emits no PCM and the
+ * queue looks like it finished normally.
+ */
+export async function probeStreamUrl(url: string): Promise<StreamProbe> {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Range: "bytes=0-2047",
+        Referer: "https://www.youtube.com/",
+        "User-Agent": PROBE_USER_AGENT,
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Node may have already consumed a tiny 403 body.
+    }
+    return { ok: res.status >= 200 && res.status < 400, status: res.status };
+  } catch {
+    return { ok: false, status: null };
+  }
 }

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { config } from "../config.js";
+import { cookiesRejected } from "./cookieState.js";
 
 const run = promisify(execFile);
 
@@ -66,7 +67,7 @@ export async function getStreamUrlWithYtDlp(url: string): Promise<string> {
     "--no-playlist",
     "--no-warnings",
     "--js-runtimes", "node",
-    ...(cookieFile ? ["--cookies", cookieFile] : []),
+    ...(cookieFile && !cookiesRejected() ? ["--cookies", cookieFile] : []),
     url,
   ];
   const { stdout } = await run(config.ytdlpPath, args, { timeout: 45_000, maxBuffer: 1024 * 1024 });

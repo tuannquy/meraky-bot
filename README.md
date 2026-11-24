@@ -101,10 +101,15 @@ Nên tắt thêm **Public Bot** trong Developer Portal (tab **Bot**) để ngư�
 YouTube thường chặn việc lấy luồng âm thanh từ IP của các nhà cung cấp cloud. Khi bị chặn, bot báo *"YouTube đang chặn máy chủ của Meraky"*. Tìm kiếm vẫn chạy nhưng bài không phát được. Cách khắc phục:
 
 1. Dùng một tài khoản Google **phụ**, đừng dùng tài khoản chính.
-2. Cài extension [Cookie-Editor](https://cookie-editor.com) hoặc EditThisCookie, đăng nhập youtube.com, rồi export cookie dạng **JSON**.
-3. Dán toàn bộ JSON (một dòng) vào biến `YOUTUBE_COOKIES`.
+2. Mở **cửa sổ ẩn danh**, đăng nhập youtube.com, rồi trong **cùng tab đó** mở `https://www.youtube.com/robots.txt`.
+3. Dùng extension [Cookie-Editor](https://cookie-editor.com) xuất cookie của `youtube.com` dạng **JSON**, sau đó **đóng hẳn cửa sổ ẩn danh**. Việc này giúp YouTube không xoay (làm vô hiệu) cookie vừa xuất.
+4. Dán toàn bộ JSON (một dòng) vào biến `YOUTUBE_COOKIES`, rồi redeploy.
+
+Bộ cookie cần có đủ `SID`, `SAPISID`, `__Secure-1PSID`, `__Secure-3PSID`, `__Secure-1PAPISID`, `__Secure-3PAPISID`. Nếu thiếu `SAPISID`, bot bỏ qua cookie và chạy không cookie.
 
 Meraky dùng cookie này cho cả ytdl-core và yt-dlp. Nếu ytdl-core không lấy được luồng, bot tự động thử lại bằng yt-dlp.
+
+**Khi cookie hết hạn:** nếu YouTube báo cookie đã đăng xuất (`AUTH_FAILED`, *"YouTube treats the cookie as signed out"*), bot ghi log cảnh báo, tự tắt cookie đó và thử lại không cookie, nên bài vẫn có thể phát nếu IP không bị chặn. Nếu IP vẫn bị chặn thì bot báo cần cookie mới. Cookie lấy từ trình duyệt đang dùng thường bị xoay sau vài giờ hoặc vài ngày, vì vậy hãy xuất theo cách ẩn danh ở trên.
 
 ## 3. Deploy lên Railway
 
@@ -162,6 +167,8 @@ src/
 ├── music/
 │   ├── player.ts            # Cấu hình DisTube, tin nhắn "Đang phát", tự rời kênh
 │   ├── youtubePlugin.ts     # Plugin YouTube có dự phòng bằng yt-dlp
+│   ├── streamHealth.ts      # Phát hiện luồng chết sớm, kiểm tra URL trước khi phát
+│   ├── cookieState.ts       # Cookie YouTube bị từ chối thì tắt toàn cục
 │   ├── ytdlp.ts             # Gọi yt-dlp, chuyển cookie sang định dạng Netscape
 │   └── lyricsService.ts     # Tìm lời bài hát (LRCLIB rồi đến Genius)
 └── utils/                   # Embed, định dạng thời gian, lỗi, kiểm tra kênh thoại
@@ -173,6 +180,8 @@ src/
 |------------|------------|
 | Không thấy lệnh `/meraky` | Đặt `DISCORD_GUILD_ID` để lệnh hiện ngay, hoặc đợi vài phút với lệnh toàn cục. Kiểm tra bot được mời với scope `applications.commands` |
 | "YouTube đang chặn máy chủ" | Cấu hình `YOUTUBE_COOKIES` |
+| "Cookie YouTube của bot không còn hợp lệ" / log `AUTH_FAILED` | Xuất cookie mới theo cách ẩn danh (mục Cookie YouTube), cập nhật `YOUTUBE_COOKIES`, redeploy |
+| Thẻ "Đang phát" hiện rồi ngay sau đó "Hết hàng đợi" | YouTube trả URL nhưng không phát được (thường 403). Bot tự kiểm tra URL, chuyển sang yt-dlp và thử lại. Redeploy bản mới. Log sẽ có `Kết thúc … phát 0.0s` rồi `dùng luồng từ yt-dlp` |
 | Bot vào kênh nhưng không có tiếng | Kiểm tra FFmpeg đã cài (`ffmpeg -version`), bot có quyền **Speak** |
 | "Meraky cần quyền Connect và Speak" | Cấp quyền cho role của bot ở kênh thoại đó |
 | Kênh thoại tạm (VoiceMaster, ...) bị xóa khi bạn thoát | Meraky tự dọn hàng đợi và rời đi ngay khi kênh bị xóa. Nếu có gì còn sót, mọi lệnh `/meraky` cũng tự dọn phiên hỏng trước khi chạy |

@@ -2,7 +2,7 @@ import type { Client, GuildTextBasedChannel, Message } from "discord.js";
 import { DisTube, Events, RepeatMode, type Queue, type Song } from "distube";
 import { config } from "../config.js";
 import { detectPrematureEnd, recordFfmpegLine, takeFfmpegTail } from "./streamHealth.js";
-import { MerakyYouTubePlugin, preferYtDlpFor } from "./youtubePlugin.js";
+import { createYouTubePlugin, enableYtDlpPreference, preferYtDlpFor } from "./youtubePlugin.js";
 import { isYtDlpAvailable } from "./ytdlp.js";
 import { controlRow, errorEmbed, infoEmbed, nowPlayingEmbed } from "../utils/embed.js";
 import { describeError } from "../utils/errors.js";
@@ -18,12 +18,20 @@ const MAX_RETRY_MEMORY = 200;
 
 export function createPlayer(client: Client): DisTube {
   const distube = new DisTube(client, {
-    plugins: [new MerakyYouTubePlugin({ cookies: config.youtubeCookies })],
+    plugins: [createYouTubePlugin(config.youtubeCookies)],
     emitNewSongOnly: true,
     savePreviousSongs: true,
     emitAddSongWhenCreatingQueue: false,
     emitAddListWhenCreatingQueue: false,
     joinNewVoiceChannel: false,
+    ffmpeg: {
+      args: {
+        input: {
+          headers:
+            "Referer: https://www.youtube.com/\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36\r\n",
+        },
+      },
+    },
   });
 
   registerPlayerEvents(distube);
@@ -123,11 +131,13 @@ function retryWithYtDlp(distube: DisTube, queue: Queue, song: Song): boolean {
   if (retriedSongs.size >= MAX_RETRY_MEMORY) retriedSongs.clear();
   retriedSongs.add(key);
   preferYtDlpFor.add(song.id);
+  enableYtDlpPreference();
   if (song.stream.playFromSource) delete song.stream.url;
 
   const guildId = queue.id;
   const textChannel = queue.textChannel;
   pendingRetries.add(guildId);
+  cancelIdleLeave(guildId);
   setTimeout(async () => {
     pendingRetries.delete(guildId);
     try {
@@ -146,11 +156,17 @@ function retryWithYtDlp(distube: DisTube, queue: Queue, song: Song): boolean {
 
 async function handleSongFinished(distube: DisTube, queue: Queue, song: Song) {
   const tail = takeFfmpegTail(queue.id);
-  const end = detectPrematureEnd(queue, song);
+  const process = queue.voice?.stream?.process;
+  const playedSeconds = Number(queue.currentTime) || 0;
+  console.log(
+    `[player] Kết thúc ${song.id}: phát ${playedSeconds.toFixed(1)}s / ${song.duration || 0}s, ffmpeg exit=${process?.exitCode ?? "null"} signal=${process?.signalCode ?? "null"}`,
+  );
+
+  const end = detectPrematureEnd(song, playedSeconds);
   if (!end) return;
 
   console.warn(
-    `[player] Bài ${song.id} (${formatTime(song.duration)}) dừng sau ${end.playedSeconds.toFixed(1)}s, ffmpeg thoát với mã ${end.ffmpegExitCode}. Log ffmpeg cuối:\n  ${tail.join("\n  ") || "(trống)"}`,
+    `[player] Bài ${song.id} (${formatTime(song.duration)}) dừng sau ${end.playedSeconds.toFixed(1)}s (ngưỡng ${end.threshold.toFixed(1)}s). Log ffmpeg cuối:\n  ${tail.join("\n  ") || "(trống)"}`,
   );
 
   if (retryWithYtDlp(distube, queue, song)) {
@@ -190,7 +206,10 @@ function registerPlayerEvents(distube: DisTube) {
       Events.FINISH,
       guard(Events.FINISH, async (queue) => {
         await clearNowPlayingControls(queue.id);
-        if (pendingRetries.has(queue.id)) return;
+        if (pendingRetries.has(queue.id)) {
+          console.log(`[player] Bỏ qua "Hết hàng đợi" vì đang thử lại bài ở guild ${queue.id}.`);
+          return;
+        }
         await send(queue, {
           embeds: [infoEmbed("Hết hàng đợi rồi. Dùng `/meraky play` để thêm bài mới nhé.")],
         });
@@ -201,6 +220,7 @@ function registerPlayerEvents(distube: DisTube) {
       Events.DELETE_QUEUE,
       guard(Events.DELETE_QUEUE, async (queue) => {
         await clearNowPlayingControls(queue.id);
+        if (pendingRetries.has(queue.id)) return;
         if (distube.voices.get(queue.id) && !idleTimers.has(queue.id)) {
           scheduleIdleLeave(distube, queue.id, "không còn bài nào để phát", queue.textChannel);
         }
