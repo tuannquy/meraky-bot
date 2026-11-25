@@ -88,8 +88,8 @@ export function registerInteractionEvents(client: Client, distube: DisTube) {
     const isMerakyInput =
       (interaction.isChatInputCommand() && interaction.commandName === "meraky") ||
       (interaction.isButton() && interaction.customId.startsWith(`${CONTROL_PREFIX}:`));
-    if (isMerakyInput && interaction.user.id !== config.allowedUserId) {
-      await replyError(interaction as RepliableInteraction, new UserError("Bot này là bot riêng, chỉ chủ bot mới dùng được."));
+    if (isMerakyInput && !config.allowedUserIds.has(interaction.user.id)) {
+      await replyError(interaction as RepliableInteraction, new UserError("Bot này là bot riêng, chỉ người được phép mới dùng được."));
       return;
     }
 

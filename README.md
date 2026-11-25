@@ -79,7 +79,7 @@ Khi test, nên đặt `DISCORD_GUILD_ID` là ID server của bạn. Lệnh `/mer
 | Biến | Bắt buộc | Mô tả |
 |------|----------|-------|
 | `DISCORD_TOKEN` | Có | Token của bot |
-| `ALLOWED_USER_ID` | Có | ID người dùng Discord duy nhất được dùng bot (xem phần "Giới hạn người dùng") |
+| `ALLOWED_USER_ID` | Có | Một hoặc nhiều ID Discord, cách nhau bằng dấu phẩy (xem phần "Giới hạn người dùng") |
 | `DISCORD_GUILD_ID` | Không | Đăng ký lệnh riêng cho một server (hiện ngay) |
 | `GENIUS_API_KEY` | Không | Token Genius, giúp nguồn lời dự phòng ổn định hơn |
 | `YOUTUBE_COOKIES` | Không* | Cookie YouTube dạng JSON array (xem bên dưới) |
@@ -90,9 +90,21 @@ Khi test, nên đặt `DISCORD_GUILD_ID` là ID server của bạn. Lệnh `/mer
 
 ### Giới hạn người dùng
 
-Meraky là bot riêng: chỉ người có ID trong `ALLOWED_USER_ID` dùng được lệnh `/meraky` và các nút điều khiển. Người khác sẽ nhận thông báo "Bot này là bot riêng" chỉ họ nhìn thấy. Thiếu hoặc sai biến này thì bot không khởi động.
+Meraky là bot riêng: chỉ những ID trong `ALLOWED_USER_ID` dùng được lệnh `/meraky` và các nút điều khiển. Người khác sẽ nhận thông báo "Bot này là bot riêng" chỉ họ nhìn thấy. Thiếu hoặc sai biến này thì bot không khởi động.
 
-Lấy ID của bạn: Discord > **Cài đặt > Nâng cao** > bật **Chế độ nhà phát triển**, rồi nhấp chuột phải vào tên bạn và chọn **Sao chép ID người dùng**.
+Một ID:
+
+```
+ALLOWED_USER_ID=123456789012345678
+```
+
+Nhiều ID, cách nhau bằng dấu phẩy (khoảng trắng cũng được):
+
+```
+ALLOWED_USER_ID=123456789012345678,234567890123456789
+```
+
+Lấy ID: Discord > **Cài đặt > Nâng cao** > bật **Chế độ nhà phát triển**, rồi nhấp chuột phải vào tên và chọn **Sao chép ID người dùng**.
 
 Nên tắt thêm **Public Bot** trong Developer Portal (tab **Bot**) để người lạ không mời được bot vào server của họ.
 
